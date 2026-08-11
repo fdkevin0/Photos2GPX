@@ -1,113 +1,87 @@
 import MapKit
 import SwiftUI
+import UIKit
 
-struct MapPolylineItem: Identifiable {
-    let id: UUID
-    let coordinates: [CLLocationCoordinate2D]
-    let source: GPXSource
-}
+/// How a stroke on the map picks its colour.
+enum TrackColorMode: String, CaseIterable, Identifiable {
+    case activity
+    case source
 
-struct MapWaypointItem: Identifiable {
-    let id: Int
-    let coordinate: CLLocationCoordinate2D
-}
+    var id: String { rawValue }
 
-/// Read-only map showing every track segment and a capped number of waypoints.
-struct MapPreview: View {
-    let polylines: [MapPolylineItem]
-    let waypoints: [MapWaypointItem]
-
-    @State private var position: MapCameraPosition
-
-    init(document: GPXDocument, maximumWaypoints: Int = 300) {
-        var lines: [MapPolylineItem] = []
-        for track in document.tracks {
-            for segment in track.segments where segment.points.count >= 2 {
-                lines.append(
-                    MapPolylineItem(
-                        id: segment.id,
-                        coordinates: segment.points.map(\.coordinate),
-                        source: track.source
-                    )
-                )
-            }
-        }
-        polylines = lines
-
-        // Drawing thousands of annotations makes the preview unusable, so a
-        // representative sample is shown instead.
-        let allWaypoints = document.waypoints
-        let step = max(1, allWaypoints.count / max(1, maximumWaypoints))
-        waypoints = allWaypoints.enumerated()
-            .filter { $0.offset % step == 0 }
-            .map { MapWaypointItem(id: $0.offset, coordinate: $0.element.coordinate) }
-
-        if let region = MapPreview.region(for: document.allCoordinates) {
-            _position = State(initialValue: MapCameraPosition.region(region))
-        } else {
-            _position = State(initialValue: MapCameraPosition.automatic)
+    var title: String {
+        switch self {
+        case .activity: return "Activity"
+        case .source: return "Source"
         }
     }
+}
+
+/// Small non-interactive map card. Curves and activity colours, no gestures —
+/// it lives inside a scrolling list, so it must not eat drags.
+struct MapPreview: View {
+    let document: GPXDocument
+    var colorBy: TrackColorMode = .activity
+
+    @State private var model: TrackRenderModel?
+    @State private var position: MapCameraPosition = .automatic
 
     var body: some View {
-        Map(position: $position) {
-            ForEach(polylines) { line in
-                MapPolyline(coordinates: line.coordinates)
-                    .stroke(
-                        MapPreview.color(for: line.source),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
-                    )
-            }
-            ForEach(waypoints) { waypoint in
-                Annotation(coordinate: waypoint.coordinate) {
-                    Circle()
-                        .fill(MapPreview.color(for: .photos))
-                        .overlay(Circle().stroke(.white, lineWidth: 1.5))
-                        .frame(width: 10, height: 10)
-                } label: {
-                    EmptyView()
+        Map(position: $position, interactionModes: []) {
+            if let model {
+                ForEach(model.polylines) { line in
+                    MapPolyline(coordinates: line.coordinates)
+                        .stroke(
+                            TrackStyle.color(for: line, mode: colorBy),
+                            style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round)
+                        )
+                }
+                ForEach(model.waypoints) { waypoint in
+                    Annotation(coordinate: waypoint.coordinate) {
+                        TrackStyle.waypointDot
+                    } label: {
+                        EmptyView()
+                    }
                 }
             }
         }
-        .mapControls {
-            MapCompass()
-            MapScaleView()
+        .overlay {
+            if model == nil {
+                ProgressView()
+            }
+        }
+        .task(id: document) {
+            let prepared = await TrackRenderer.prepare(document: document)
+            model = prepared
+            if let region = prepared.region {
+                position = .region(region)
+            }
+        }
+    }
+}
+
+/// Shared drawing constants so the inline preview and the full map agree.
+enum TrackStyle {
+    static let lineWidth: CGFloat = 4.5
+    static let selectedLineWidth: CGFloat = 7
+    static let casingWidth: CGFloat = 2.5
+
+    static func color(for line: RenderedPolyline, mode: TrackColorMode) -> Color {
+        switch mode {
+        case .activity: return line.mode.color
+        case .source: return line.source.color
         }
     }
 
-    static func color(for source: GPXSource) -> Color {
-        switch source {
-        case .workout: .blue
-        case .photos: .orange
-        case .imported: .green
-        }
+    /// Drawn under each stroke so routes stay readable over busy map tiles.
+    static var casingColor: Color {
+        Color(uiColor: .systemBackground).opacity(0.85)
     }
 
-    /// Bounding region with a little padding, or `nil` when there is nothing to show.
-    static func region(for coordinates: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
-        guard !coordinates.isEmpty else { return nil }
-
-        var minLatitude = 90.0
-        var maxLatitude = -90.0
-        var minLongitude = 180.0
-        var maxLongitude = -180.0
-
-        for coordinate in coordinates where CLLocationCoordinate2DIsValid(coordinate) {
-            minLatitude = min(minLatitude, coordinate.latitude)
-            maxLatitude = max(maxLatitude, coordinate.latitude)
-            minLongitude = min(minLongitude, coordinate.longitude)
-            maxLongitude = max(maxLongitude, coordinate.longitude)
-        }
-        guard minLatitude <= maxLatitude, minLongitude <= maxLongitude else { return nil }
-
-        let center = CLLocationCoordinate2D(
-            latitude: (minLatitude + maxLatitude) / 2,
-            longitude: (minLongitude + maxLongitude) / 2
-        )
-        let span = MKCoordinateSpan(
-            latitudeDelta: max((maxLatitude - minLatitude) * 1.3, 0.005),
-            longitudeDelta: max((maxLongitude - minLongitude) * 1.3, 0.005)
-        )
-        return MKCoordinateRegion(center: center, span: span)
+    static var waypointDot: some View {
+        Circle()
+            .fill(GPXSource.photos.color)
+            .overlay(Circle().stroke(.white, lineWidth: 1.5))
+            .frame(width: 10, height: 10)
     }
 }

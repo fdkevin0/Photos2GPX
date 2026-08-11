@@ -16,6 +16,12 @@ struct ResultView: View {
                 MapPreview(document: document)
                     .frame(height: 260)
                     .listRowInsets(EdgeInsets())
+
+                NavigationLink {
+                    TrackMapView(document: document)
+                } label: {
+                    Label("Open full map & activity", systemImage: "map")
+                }
             }
 
             Section("Summary") {
@@ -70,7 +76,7 @@ private struct TrackRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             RoundedRectangle(cornerRadius: 2)
-                .fill(MapPreview.color(for: track.source))
+                .fill(track.source.color)
                 .frame(width: 4)
                 .frame(maxHeight: .infinity)
 

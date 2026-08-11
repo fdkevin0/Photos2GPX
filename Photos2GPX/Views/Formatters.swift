@@ -9,6 +9,16 @@ enum Formatters {
         return formatter.string(from: measurement)
     }
 
+    /// Metres per second rendered in the locale's preferred speed unit.
+    static func speed(_ metersPerSecond: Double) -> String {
+        guard metersPerSecond.isFinite, metersPerSecond >= 0 else { return "—" }
+        let measurement = Measurement(value: metersPerSecond, unit: UnitSpeed.metersPerSecond)
+        let formatter = MeasurementFormatter()
+        formatter.unitOptions = .naturalScale
+        formatter.numberFormatter.maximumFractionDigits = 1
+        return formatter.string(from: measurement)
+    }
+
     static func duration(_ seconds: TimeInterval) -> String {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = seconds >= 3600 ? [.hour, .minute] : [.minute, .second]
